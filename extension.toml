@@ -1,7 +1,7 @@
 id = "zedcomp"
 name = "ZedComp"
 description = "Competitive programming companion: receive problems from Competitive Companion, generate problem folders with test files, and judge them locally."
-version = "0.1.0"
+version = "0.1.1"
 schema_version = 1
 authors = ["ZedComp contributors <https://github.com/BurstWhite/zedcomp>"]
 repository = "https://github.com/BurstWhite/zedcomp"
