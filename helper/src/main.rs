@@ -38,7 +38,7 @@ ENVIRONMENT:
     ZEDCOMP_CONFIG_DIR Directory holding template.cpp and cxxflags
                        (default ~/.config/zedcomp)
     ZEDCOMP_CXX        C++ compiler used by `judge` (default g++)
-    ZEDCOMP_CXXFLAGS   Compile flags for `judge` (default \"-std=c++17 -O2\")
+    ZEDCOMP_CXXFLAGS   Compile flags for `judge` (default \"-std=c++2a -O2 -Wall -Wextra\")
     ZEDCOMP_ZED_CLI    `zed` CLI path used to open main.cpp
     ZEDCOMP_NO_OPEN    Set to 1 to never launch `zed`
 
@@ -56,7 +56,7 @@ Placeholders: {{PROBLEM_NAME}} {{URL}} {{CONTEST}} {{PROBLEM_ID}} {{OJ}}
 COMPILE FLAGS for `judge` (first source that is available wins):
     1. ZEDCOMP_CXXFLAGS
     2. $ZEDCOMP_CONFIG_DIR/cxxflags (default ~/.config/zedcomp/cxxflags)
-    3. built-in default: -std=c++17 -O2
+    3. built-in default: -std=c++2a -O2 -Wall -Wextra
 Values are split on ASCII whitespace: no quoting, no backslash escaping.";
 
 fn main() -> ExitCode {

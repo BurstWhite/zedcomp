@@ -6,12 +6,12 @@
 //!
 //! `judge` is a standalone CLI process, so the compiler and the flags come from
 //! its own environment — `ZEDCOMP_CXX` for the compiler, and `ZEDCOMP_CXXFLAGS`
-//! / `$ZEDCOMP_CONFIG_DIR/cxxflags` / the built-in `-std=c++17 -O2` for the
-//! flags, in that order. See [`crate::cxxflags`] for the exact rules.
+//! / `$ZEDCOMP_CONFIG_DIR/cxxflags` / the built-in `-std=c++2a -O2 -Wall -Wextra`
+//! for the flags, in that order. See [`crate::cxxflags`] for the exact rules.
 //!
 //! Output format (one line per test, `k` is the test number):
 //! ```text
-//! Judging /path/to/problem (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++17 -O2)
+//! Judging /path/to/problem (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++2a -O2 -Wall -Wextra)
 //! Test #1: AC (12ms)
 //! Test #2: WA
 //! ```

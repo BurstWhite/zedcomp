@@ -59,7 +59,7 @@ PROBLEM_DIR=""
 
 # Pin the config directory to an empty one unless the caller set it: without a
 # template.cpp the generated main.cpp must be a 0-byte file (asserted below),
-# and without a cxxflags file `judge` must use the built-in `-std=c++17 -O2`.
+# and without a cxxflags file `judge` must use the built-in `-std=c++2a -O2 -Wall -Wextra`.
 # Either assertion would otherwise depend on the developer's ~/.config/zedcomp.
 if [ -z "${ZEDCOMP_CONFIG_DIR:-}" ]; then
   ZEDCOMP_CONFIG_DIR="${LOGDIR}/config"

@@ -127,7 +127,7 @@ echo "judge: built-in flags when nothing is configured -> macro undefined -> WA"
 OUT="$("$BIN" judge "$DIR7" 2>&1)"; CODE=$?
 echo "$OUT" | sed 's/^/    | /'
 check "$CODE" "1" "default flags leave ZEDCOMP_TEST_FLAG undefined"
-echo "$OUT" | grep -q "cxx: .* -std=c++17 -O2)" && pass "summary reports compiler + default flags" || fail "summary reports compiler + default flags"
+echo "$OUT" | grep -q "cxx: .* -std=c++2a -O2 -Wall -Wextra)" && pass "summary reports compiler + default flags" || fail "summary reports compiler + default flags"
 
 echo "judge: ZEDCOMP_CXXFLAGS=-DZEDCOMP_TEST_FLAG -> AC"
 OUT="$(ZEDCOMP_CXXFLAGS="-DZEDCOMP_TEST_FLAG" "$BIN" judge "$DIR7" 2>&1)"; CODE=$?
@@ -144,7 +144,7 @@ echo "$OUT" | sed 's/^/    | /'
 check "$CODE" "0" "blank ZEDCOMP_CXXFLAGS falls back to the cxxflags file"
 
 echo "judge: a real ZEDCOMP_CXXFLAGS beats the cxxflags file"
-OUT="$(ZEDCOMP_CXXFLAGS="-std=c++17" ZEDCOMP_CONFIG_DIR="$CFGDIR" "$BIN" judge "$DIR7" 2>&1)"; CODE=$?
+OUT="$(ZEDCOMP_CXXFLAGS="-std=c++2a" ZEDCOMP_CONFIG_DIR="$CFGDIR" "$BIN" judge "$DIR7" 2>&1)"; CODE=$?
 echo "$OUT" | sed 's/^/    | /'
 check "$CODE" "1" "env flags win over the config file"
 

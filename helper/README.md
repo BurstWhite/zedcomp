@@ -103,7 +103,7 @@ zedcomp-helper judge .
 4. 输出:
 
 ```
-Judging /path/to/codeforces/118/A (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++17 -O2)
+Judging /path/to/codeforces/118/A (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++2a -O2 -Wall -Wextra)
 Test #1: AC (3ms)
 Test #2: WA
   first difference at line 1
@@ -114,7 +114,7 @@ Test #3: TLE
 1/3 test(s) passed
 ```
 
-第一行括号里带上本次实际使用的编译器和 flags(上面例子里是 `g++ -std=c++17 -O2`),
+第一行括号里带上本次实际使用的编译器和 flags(上面例子里是 `g++ -std=c++2a -O2 -Wall -Wextra`),
 配错 flags 时一眼就能看出来。
 
 全部 AC 退出码 `0`,否则 `1`(编译失败、无测试点同样非 0)。`.main` 会保留,便于
@@ -129,7 +129,7 @@ Test #3: TLE
 | --- | --- | --- |
 | 1 | `ZEDCOMP_CXXFLAGS` 环境变量 | 如 `"-std=c++20 -O2 -Wall"` |
 | 2 | `$ZEDCOMP_CONFIG_DIR/cxxflags` | 单行、同样的格式(默认 `~/.config/zedcomp/cxxflags`) |
-| 3 | 内置默认 | `-std=c++17 -O2` |
+| 3 | 内置默认 | `-std=c++2a -O2 -Wall -Wextra` |
 
 分词规则:按 ASCII 空白(空格 / Tab / 换行)切分,丢弃空片段;**不支持引号与反斜杠
 转义**,所以单个 flag 里不能有空白,需要带空格的值请写成 `-DNAME=VALUE` 而不是
@@ -160,7 +160,7 @@ ZEDCOMP_CXX=g++-14 ZEDCOMP_CXXFLAGS="-std=c++20 -O2 -DDEBUG" zedcomp-helper judg
 | `ZEDCOMP_WORKSPACE` | 工作目录根,优先于 LSP 的 rootUri/rootPath |
 | `ZEDCOMP_CONFIG_DIR` | 查找 `template.cpp` 与 `cxxflags` 的目录(默认 `~/.config/zedcomp`) |
 | `ZEDCOMP_CXX` | judge 使用的 C++ 编译器(默认 `g++`) |
-| `ZEDCOMP_CXXFLAGS` | judge 的编译选项(默认 `-std=c++17 -O2`) |
+| `ZEDCOMP_CXXFLAGS` | judge 的编译选项(默认 `-std=c++2a -O2 -Wall -Wextra`) |
 | `ZEDCOMP_ZED_CLI` | 打开文件用的 `zed` CLI 路径 |
 | `ZEDCOMP_NO_OPEN` | 设为 `1` 则不调用 `zed` |
 

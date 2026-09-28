@@ -227,7 +227,7 @@ nested `"zedcomp"` object instead, e.g.
 | --- | --- | --- |
 | 1 | `$ZEDCOMP_CXXFLAGS` | Environment variable, e.g. `"-std=c++20 -O2 -Wall"`. |
 | 2 | `$ZEDCOMP_CONFIG_DIR/cxxflags` | One line in the same format (`ZEDCOMP_CONFIG_DIR` defaults to `~/.config/zedcomp`). |
-| 3 | built-in default | `-std=c++17 -O2`. |
+| 3 | built-in default | `-std=c++2a -O2 -Wall -Wextra`. |
 
 The value is split on ASCII whitespace (spaces, tabs, newlines) and empty pieces
 are dropped; **there is no quoting or backslash escaping**, so a flag cannot
@@ -260,7 +260,7 @@ configurable — see [Customizing compile flags](#customizing-compile-flags)
 above:
 
 ```
-Judging ~/cp/cf/118/A (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++17 -O2)
+Judging ~/cp/cf/118/A (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++2a -O2 -Wall -Wextra)
 Test #1: AC (12ms)
 Test #2: WA
   first difference at line 1

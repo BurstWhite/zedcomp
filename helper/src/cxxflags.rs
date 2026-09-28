@@ -7,7 +7,7 @@
 //!
 //! 1. `ZEDCOMP_CXXFLAGS` — environment variable,
 //! 2. `$ZEDCOMP_CONFIG_DIR/cxxflags` — default `~/.config/zedcomp/cxxflags`,
-//! 3. [`DEFAULT_FLAGS`] — `-std=c++17 -O2`.
+//! 3. [`DEFAULT_FLAGS`] — `-std=c++2a -O2 -Wall -Wextra`.
 //!
 //! Splitting is deliberately naive: the value is split on ASCII whitespace
 //! (spaces, tabs, newlines) and empty pieces are dropped. There is **no**
@@ -32,7 +32,7 @@ pub const CONFIG_FLAGS_NAME: &str = "cxxflags";
 /// Compiler used when `ZEDCOMP_CXX` is not configured.
 pub const DEFAULT_COMPILER: &str = "g++";
 /// Compile flags used when neither `ZEDCOMP_CXXFLAGS` nor the config file apply.
-pub const DEFAULT_FLAGS: [&str; 2] = ["-std=c++17", "-O2"];
+pub const DEFAULT_FLAGS: [&str; 4] = ["-std=c++2a", "-O2", "-Wall", "-Wextra"];
 
 /// Where the compiler and flags came from.
 #[derive(Debug, Clone, PartialEq, Eq)]

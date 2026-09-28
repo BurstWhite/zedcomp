@@ -93,7 +93,7 @@ fn scratch_dir(label: &str) -> PathBuf {
 #[test]
 fn judging_line_reports_the_compiler_and_flags_in_use() {
     let problem = Problem::new("summary");
-    let (code, output) = judge(problem.dir(), Some("-std=c++17 -DZEDCOMP_TEST_FLAG"), None);
+    let (code, output) = judge(problem.dir(), Some("-std=c++2a -DZEDCOMP_TEST_FLAG"), None);
 
     assert_eq!(code, 0, "expected AC, got:\n{output}");
     let first = output.lines().next().unwrap_or_default();
@@ -108,7 +108,7 @@ fn judging_line_reports_the_compiler_and_flags_in_use() {
         "summary line does not report the toolchain: {first}"
     );
     assert!(
-        first.ends_with("-std=c++17 -DZEDCOMP_TEST_FLAG)"),
+        first.ends_with("-std=c++2a -DZEDCOMP_TEST_FLAG)"),
         "summary line is missing the effective flags: {first}"
     );
 }
@@ -123,7 +123,7 @@ fn env_flags_change_what_the_program_compiles_to() {
     assert!(output.contains("Test #1: WA"), "unexpected output:\n{output}");
     // …and the summary advertises the built-in default flags.
     assert!(
-        output.contains("-std=c++17 -O2"),
+        output.contains("-std=c++2a -O2 -Wall -Wextra"),
         "default flags missing from the summary:\n{output}"
     );
 
@@ -149,7 +149,7 @@ fn config_file_supplies_flags_and_env_wins_over_it() {
     assert_eq!(code, 0, "blank ZEDCOMP_CXXFLAGS must fall back to the file:\n{output}");
 
     // A real env var wins over the file: the macro is gone -> WA again.
-    let (code, output) = judge(problem.dir(), Some("-std=c++17"), Some(&config_dir));
+    let (code, output) = judge(problem.dir(), Some("-std=c++2a"), Some(&config_dir));
     assert_eq!(code, 1, "env flags must beat the config file:\n{output}");
     assert!(output.contains("Test #1: WA"), "unexpected output:\n{output}");
 
