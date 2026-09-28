@@ -1,0 +1,25 @@
+[package]
+name = "zedcomp-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Native helper for the ZedComp Zed extension: Competitive Companion receiver, workspace generator and local judge"
+license = "MIT"
+repository = "https://github.com/zedcomp/zedcomp"
+rust-version = "1.75"
+
+[[bin]]
+name = "zedcomp-helper"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+# `helper/` is deliberately its own workspace root: the Zed extension crate lives
+# at the repository root and targets wasm32-wasip2, so the native helper must
+# never be pulled into that build graph (nor vice versa).
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

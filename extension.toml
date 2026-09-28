@@ -1,0 +1,23 @@
+id = "zedcomp"
+name = "ZedComp"
+description = "Competitive programming companion: receive problems from Competitive Companion, generate problem folders with test files, and judge them locally."
+version = "0.1.0"
+schema_version = 1
+authors = ["ZedComp contributors <https://github.com/BurstWhite/zedcomp>"]
+repository = "https://github.com/BurstWhite/zedcomp"
+
+# Snippet file that ships with the extension. The file stem selects the scope:
+# `snippets.json` is the global scope, `c++.json` would be C++ only.
+snippets = "snippets/snippets.json"
+
+[lib]
+kind = "Rust"
+version = "0.7.0"
+
+# The helper is registered as an *additional* language server for C, C++ and
+# Python: it never replaces clangd / pyright, it only keeps a background
+# process alive that listens for Competitive Companion HTTP POSTs while also
+# speaking a minimal LSP over stdio.
+[language_servers.zedcomp-helper]
+name = "ZedComp Helper"
+languages = ["C", "C++", "Python"]

@@ -1,0 +1,16 @@
+[package]
+name = "zedcomp-extension"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Zed extension that runs the ZedComp helper (Competitive Companion client + local judge)."
+repository = "https://github.com/BurstWhite/zedcomp"
+# The native helper lives in `helper/` and is its own crate; keep it out of
+# this package's file list.
+exclude = ["helper"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7"

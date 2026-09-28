@@ -1,0 +1,31 @@
+{
+  "name": "A+B Problem",
+  "group": "Luogu - 洛谷",
+  "url": "https://www.luogu.com.cn/problem/P1001",
+  "interactive": false,
+  "memoryLimit": 125,
+  "timeLimit": 1000,
+  "tests": [
+    {
+      "input": "1 2\n",
+      "output": "3\n"
+    },
+    {
+      "input": "100 200\n",
+      "output": "300\n"
+    }
+  ],
+  "testType": "single",
+  "input": {
+    "type": "stdin"
+  },
+  "output": {
+    "type": "stdout"
+  },
+  "languages": {
+    "java": {
+      "mainClass": "Main",
+      "taskClass": "ABProblem"
+    }
+  }
+}
