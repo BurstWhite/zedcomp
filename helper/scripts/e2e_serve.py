@@ -161,11 +161,16 @@ print("scenario A: env workspace wins, port override rebinds, cf fixture")
 port_a = free_port(BASE_PORT)
 port_b = free_port(port_a + 1)
 ws_a = os.path.join(ROOT, "ws-a")
+# Empty config dir: no template.cpp, so the default (empty) main.cpp applies even
+# when the developer running this script has a real ~/.config/zedcomp/template.cpp.
+config_a = os.path.join(ROOT, "config-a")
 os.makedirs(ws_a, exist_ok=True)
-proc = start(port_a, workspace=ws_a)
+os.makedirs(config_a, exist_ok=True)
+proc = start(port_a, workspace=ws_a, extra_env={"ZEDCOMP_CONFIG_DIR": config_a})
 ready = handshake(proc, "file:///nonexistent/should-be-ignored", {"port": port_b})
 check(f"127.0.0.1:{port_b}" in ready, "logMessage reports override port", ready)
 check(ws_a in ready, "logMessage reports env workspace", ready)
+check("main.cpp is written empty" in ready, "logMessage reports the empty default", ready)
 
 status, body = post(port_b, os.path.join(FIXTURES, "cf.json"))
 check(status == 200 and body == b"", "POST -> 200 with empty body", f"{status} {body!r}")
@@ -176,10 +181,9 @@ for name in ("main.cpp", "in1", "ans1", "in2", "ans2", "in3", "ans3", "problem.j
 with open(os.path.join(problem_dir, "problem.json"), "rb") as handle:
     check(handle.read() == open(os.path.join(FIXTURES, "cf.json"), "rb").read(),
           "problem.json is the raw POST body")
-main_cpp = open(os.path.join(problem_dir, "main.cpp")).read()
-check("// A. String Task" in main_cpp, "template has problem name")
-check("codeforces.com/problemset/problem/118/A" in main_cpp, "template has url")
-check("#include <bits/stdc++.h>" in main_cpp, "template has bits header")
+# No template configured: main.cpp must be a 0-byte file (no banner/placeholder).
+main_size = os.path.getsize(os.path.join(problem_dir, "main.cpp"))
+check(main_size == 0, "default main.cpp is an empty 0-byte file", f"{main_size} bytes")
 check(open(os.path.join(problem_dir, "in2")).read() == "Codeforces\n", "in2 content")
 check(open(os.path.join(problem_dir, "ans3")).read() == ".b.c.b\n", "ans3 content")
 
@@ -307,6 +311,25 @@ check(main_cpp.startswith("// CUSTOM cf/118/A\n"), "templatePath beats the confi
 check(f"// {fixture['name']}\n" in main_cpp, "{{PROBLEM_NAME}} substituted")
 check(f"// {fixture['url']}\n" in main_cpp, "{{URL}} substituted")
 check("CONFIG-DIR TEMPLATE" not in main_cpp, "config-dir template not used")
+close(proc)
+
+# ---------------------------------------------------------------- scenario G
+print("scenario G: $ZEDCOMP_CONFIG_DIR/template.cpp applies without any options")
+port_h = free_port(port_g + 1)
+ws_g = os.path.join(ROOT, "ws-g")
+config_g = os.path.join(ROOT, "config-g")
+os.makedirs(ws_g, exist_ok=True)
+os.makedirs(config_g, exist_ok=True)
+with open(os.path.join(config_g, "template.cpp"), "w") as handle:
+    handle.write("// CONFIG-DIR {{OJ}}/{{PROBLEM_ID}}\n")
+proc = start(port_h, workspace=ws_g, extra_env={"ZEDCOMP_CONFIG_DIR": config_g})
+ready = handshake(proc, "file://" + ws_g, {})
+check(config_g in ready, "logMessage reports the config-dir template", ready)
+status, body = post(port_h, os.path.join(FIXTURES, "cf.json"))
+check(status == 200 and body == b"", "config-dir-template POST -> 200 empty")
+with open(os.path.join(ws_g, "cf", "118", "A", "main.cpp")) as handle:
+    main_cpp = handle.read()
+check(main_cpp == "// CONFIG-DIR cf/A\n", "config-dir template rendered", repr(main_cpp))
 close(proc)
 
 print()

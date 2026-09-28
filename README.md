@@ -5,9 +5,9 @@ Competitive programming companion for [Zed](https://zed.dev), modelled after
 
 ZedComp receives problems pushed by the
 [Competitive Companion](https://github.com/jmerle/competitive-companion) browser
-extension, creates a problem folder with a C++ template and the sample test
-files, opens the source file in Zed, and judges your solution locally in the
-terminal.
+extension, creates a problem folder with an (empty by default) `main.cpp` and
+the sample test files, opens the source file in Zed, and judges your solution
+locally in the terminal.
 
 ## How it works
 
@@ -36,7 +36,9 @@ the project, and stops it when the last one closes.
      [`BurstWhite/zedcomp`](https://github.com/BurstWhite/zedcomp/releases)
      (assets are named `zedcomp-helper-<target-triple>`, e.g.
      `zedcomp-helper-aarch64-apple-darwin`).
-- `g++` on your `$PATH` for `judge`.
+- A C++ compiler on your `$PATH` for `judge` — `g++` by default, overridable
+  with `ZEDCOMP_CXX`; the compile flags are configurable too (see
+  [Customizing compile flags](#customizing-compile-flags)).
 
 ## Installation
 
@@ -78,7 +80,7 @@ ZedComp then creates:
 
 ```
 <workspace_root>/<oj>/<contest>/<problem>/
-├── main.cpp        # rendered from the template, created once, never overwritten
+├── main.cpp        # empty by default (0 bytes); rendered from your template when one is configured
 ├── in1  ans1       # sample tests from the POST body
 ├── in2  ans2
 ├── ...
@@ -128,15 +130,18 @@ ZEDCOMP_WORKSPACE=~/cp zedcomp-helper
 
 ## Customizing the code template
 
-The helper renders `main.cpp` from a template. Four sources are consulted and
-the **first one that is usable wins** — every level is optional:
+**ZedComp ships no built-in template.** With nothing configured, `main.cpp` is
+created as an **empty 0-byte file** — no banner, no `#include`, not even a
+newline — so you start from a blank buffer. Configure one of these sources once
+and every fetched problem gets your usual skeleton instead. They are consulted
+in order and the **first one that is usable wins** — every level is optional:
 
 | # | Source | Notes |
 | --- | --- | --- |
 | 1 | `initializationOptions.templatePath` | Absolute path of a template file. A leading `~/` is expanded. An unreadable path logs a warning on stderr and falls through to the next level. |
 | 2 | `initializationOptions.template` | The template as an inline string in `settings.json`. |
 | 3 | `$ZEDCOMP_CONFIG_DIR/template.cpp` | `ZEDCOMP_CONFIG_DIR` defaults to `~/.config/zedcomp` (on macOS too — `XDG_CONFIG_HOME` is deliberately not consulted). |
-| 4 | built-in default | `#include <bits/stdc++.h>`, fast IO, empty `main()`. Used when nothing above is configured. |
+| 4 | nothing configured | `main.cpp` is a 0-byte empty file. |
 
 These placeholders are replaced when a problem is fetched; all of them are
 optional, and a value that does not exist for a problem becomes an empty string:
@@ -155,7 +160,7 @@ and never overwritten — delete it (or edit it in place) to pick up a new
 template for an existing problem. The template *is* re-read for every fetched
 problem, so editing the config file does not require restarting the helper; the
 `window/logMessage` ("ZedComp helper ready: … template: …") reports which source
-is in use.
+is in use (or `none (main.cpp is written empty)`).
 
 ### A template file in `~/.config/zedcomp`
 
@@ -212,15 +217,58 @@ launches Zed (or in the `env` block below).
 nested `"zedcomp"` object instead, e.g.
 `"initialization_options": { "zedcomp": { "templatePath": "…" } }`.
 
+## Customizing compile flags
+
+`judge` builds `<CXX> <flags…> -o .main main.cpp`. The compiler is `ZEDCOMP_CXX`
+(default `g++`) and the flags come from the first source that is configured —
+`judge` is a separate CLI process, so `initializationOptions` does not apply:
+
+| # | Source | Notes |
+| --- | --- | --- |
+| 1 | `$ZEDCOMP_CXXFLAGS` | Environment variable, e.g. `"-std=c++20 -O2 -Wall"`. |
+| 2 | `$ZEDCOMP_CONFIG_DIR/cxxflags` | One line in the same format (`ZEDCOMP_CONFIG_DIR` defaults to `~/.config/zedcomp`). |
+| 3 | built-in default | `-std=c++17 -O2`. |
+
+The value is split on ASCII whitespace (spaces, tabs, newlines) and empty pieces
+are dropped; **there is no quoting or backslash escaping**, so a flag cannot
+contain whitespace — write `-DNAME=VALUE`, not `-D NAME=VALUE`. An unset, empty
+or whitespace-only value counts as "not configured" and falls through to the
+next level, so `ZEDCOMP_CXXFLAGS=""` simply means "use the config file".
+The flags are passed in the order you wrote them.
+
+`judge` prints the compiler and flags it actually used on its first line, which
+is the quickest way to check that your configuration was picked up:
+
+```text
+Judging ~/cp/cf/118/A (time limit 2000 ms, 3 test(s), cxx: g++-14 -std=c++20 -O2 -Wall)
+```
+
+Keeping them in a file is usually nicer than exporting a variable in every
+shell that launches Zed:
+
+```sh
+mkdir -p ~/.config/zedcomp
+echo '-std=c++20 -O2 -Wall' > ~/.config/zedcomp/cxxflags
+```
+
 ## Judging from a task
 
 `judge` compiles `main.cpp` in a problem folder
-(`g++ -std=c++17 -O2 -o .main main.cpp`), runs every test pair within the
-problem's `timeLimit`, and prints one line per test:
+(`<CXX> <flags…> -o .main main.cpp`), runs every test pair within the problem's
+`timeLimit`, and prints one line per test. The compiler and flags are
+configurable — see [Customizing compile flags](#customizing-compile-flags)
+above:
 
 ```
+Judging ~/cp/cf/118/A (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++17 -O2)
 Test #1: AC (12ms)
-Test #2: WA (8ms)
+Test #2: WA
+  first difference at line 1
+    expected: .t.r
+    actual  : .t.rr
+Test #3: TLE
+  exceeded 2000 ms (stopped after 2001 ms)
+1/3 test(s) passed
 ```
 
 It exits with status `0` only when every test is AC. Comparison ignores trailing
@@ -313,6 +361,9 @@ works in every language. To restrict it to C++, copy the file to
 
   (`g++-14` is the binary Homebrew installs for GCC 14; check
   `ls /opt/homebrew/bin/g++-*` and adjust the version.)
+  If you need different flags on top of that compiler (for example
+  `-std=c++20`), set them via
+  [Customizing compile flags](#customizing-compile-flags).
 
 ## Distribution / Installing for others
 

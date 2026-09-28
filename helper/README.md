@@ -55,19 +55,20 @@ zedcomp-helper --help
   2. `initializationOptions.template`(内联字符串);
   3. `$ZEDCOMP_CONFIG_DIR/template.cpp`,默认 `~/.config/zedcomp/template.cpp`
      (`ZEDCOMP_CONFIG_DIR` 覆盖的是**目录**,不读 `XDG_CONFIG_HOME`);
-  4. 内嵌默认模板(见 `src/template.rs` 的 `CPP_TEMPLATE`)。
+  4. 以上都没配:**生成 0 字节的空 `main.cpp`**——不写注释、不写占位符、不写
+     `#include`,第一行由你自己写。ZedComp 不再内置任何默认模板。
 
   占位符:`{{PROBLEM_NAME}}`、`{{URL}}`、`{{CONTEST}}`、`{{PROBLEM_ID}}`、`{{OJ}}`;
   缺失值替换为空串,替换值中的换行会被压平成空格。`templatePath` 非法/不可读时
   stderr 打警告并回退到下一级,不会 panic。模板在每次收题时重新解析(改了第 3 级
   的文件无需重启 helper),`initialized` 之后的 `window/logMessage` 会报告实际
-  使用的模板来源。
+  使用的模板来源(没配模板时是 `none (main.cpp is written empty)`)。
 
 收到 POST 后生成:
 
 ```
 <workspace_root>/<oj>/[<contest>/]<problem>/
-├── main.cpp          # 按上面的优先级渲染模板,已存在则绝不覆盖
+├── main.cpp          # 默认 0 字节空文件;配了模板则按模板渲染,已存在则绝不覆盖
 ├── in1, ans1, in2, ans2, ...   # 来自 tests 数组,每次重新生成
 └── problem.json      # 原始 POST body,逐字节原样保存
 ```
@@ -92,16 +93,17 @@ zedcomp-helper judge .
 ```
 
 1. 读取 `problem.json` 取 `timeLimit`(ms,缺省 2000;可用 `-t/--time-limit` 覆盖)。
-2. 编译:`g++ -std=c++17 -O2 -o .main main.cpp`(工作目录 = 题目目录)。
+2. 编译:`<CXX> <flags...> -o .main main.cpp`(工作目录 = 题目目录)。
    编译器可用 `ZEDCOMP_CXX` 覆盖(例如 macOS 上 `g++-14` 或 `clang++`;
-   注意 `bits/stdc++.h` 需要 GCC 的 libstdc++)。
+   注意 `bits/stdc++.h` 需要 GCC 的 libstdc++)。编译选项见下面
+   [编译选项](#编译选项compile-flags)一节。
 3. 对目录里每个 `inK`(按数字排序)运行 `.main`,stdin 来自 `inK`,`timeLimit`
    超时即 kill;stdout 落临时文件后与 `ansK` 比对:忽略**行尾空白**与**文件末尾
    空行**(CRLF 兼容)。
 4. 输出:
 
 ```
-Judging /path/to/codeforces/118/A (time limit 2000 ms, 3 test(s))
+Judging /path/to/codeforces/118/A (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++17 -O2)
 Test #1: AC (3ms)
 Test #2: WA
   first difference at line 1
@@ -112,8 +114,43 @@ Test #3: TLE
 1/3 test(s) passed
 ```
 
+第一行括号里带上本次实际使用的编译器和 flags(上面例子里是 `g++ -std=c++17 -O2`),
+配错 flags 时一眼就能看出来。
+
 全部 AC 退出码 `0`,否则 `1`(编译失败、无测试点同样非 0)。`.main` 会保留,便于
 后续手动运行。
+
+### 编译选项(compile flags)
+
+`ZEDCOMP_CXXFLAGS` / `$ZEDCOMP_CONFIG_DIR/cxxflags` / 内置默认,取第一个
+**已配置**的,优先级从高到低:
+
+| # | 来源 | 说明 |
+| --- | --- | --- |
+| 1 | `ZEDCOMP_CXXFLAGS` 环境变量 | 如 `"-std=c++20 -O2 -Wall"` |
+| 2 | `$ZEDCOMP_CONFIG_DIR/cxxflags` | 单行、同样的格式(默认 `~/.config/zedcomp/cxxflags`) |
+| 3 | 内置默认 | `-std=c++17 -O2` |
+
+分词规则:按 ASCII 空白(空格 / Tab / 换行)切分,丢弃空片段;**不支持引号与反斜杠
+转义**,所以单个 flag 里不能有空白,需要带空格的值请写成 `-DNAME=VALUE` 而不是
+`-D NAME=VALUE`。空串、只有空白、空文件一律视为"未配置",自动落到下一级
+(例如 `ZEDCOMP_CXXFLAGS=""` 就等于"用配置文件")。flags 顺序与书写顺序一致。
+
+`judge` 是独立 CLI 进程,不经过 LSP,所以这些设置只能走环境变量或配置文件,
+`initializationOptions` 对它无效。
+
+配置文件方式(不用每个 shell 都 export):
+
+```sh
+mkdir -p ~/.config/zedcomp
+echo '-std=c++20 -O2 -Wall' > ~/.config/zedcomp/cxxflags
+```
+
+环境变量方式(临时覆盖,例如换标准版本或加断言宏):
+
+```sh
+ZEDCOMP_CXX=g++-14 ZEDCOMP_CXXFLAGS="-std=c++20 -O2 -DDEBUG" zedcomp-helper judge .
+```
 
 ## 环境变量一览
 
@@ -121,8 +158,9 @@ Test #3: TLE
 | --- | --- |
 | `ZEDCOMP_PORT` | HTTP 端口(默认 27121,`initializationOptions.port` 优先) |
 | `ZEDCOMP_WORKSPACE` | 工作目录根,优先于 LSP 的 rootUri/rootPath |
-| `ZEDCOMP_CONFIG_DIR` | 查找 `template.cpp` 的目录(默认 `~/.config/zedcomp`) |
+| `ZEDCOMP_CONFIG_DIR` | 查找 `template.cpp` 与 `cxxflags` 的目录(默认 `~/.config/zedcomp`) |
 | `ZEDCOMP_CXX` | judge 使用的 C++ 编译器(默认 `g++`) |
+| `ZEDCOMP_CXXFLAGS` | judge 的编译选项(默认 `-std=c++17 -O2`) |
 | `ZEDCOMP_ZED_CLI` | 打开文件用的 `zed` CLI 路径 |
 | `ZEDCOMP_NO_OPEN` | 设为 `1` 则不调用 `zed` |
 
@@ -138,9 +176,13 @@ Test #3: TLE
 
 `cargo test` 覆盖:三个 OJ 的 URL 解析(含 mirror / gym / contest 形态)、未知站点
 回退、路径分量净化、CC payload 解析(整数/浮点/字符串限制值)、工作目录生成与旧
-测试点清理、答案比对与首个差异定位、LSP 帧读写与 `initialize` 参数捕获,以及模板
-解析(优先级顺序、`templatePath` 坏路径回退、五个占位符含缺失值、`ZEDCOMP_CONFIG_DIR`
-覆盖且忽略 `XDG_CONFIG_HOME`)。
+测试点清理(默认模板为空 → `main.cpp` 断言 0 字节)、答案比对与首个差异定位、LSP
+帧读写与 `initialize` 参数捕获、模板解析(优先级顺序、`templatePath` 坏路径回退、
+五个占位符含缺失值、默认空模板),以及编译选项优先级矩阵(env / 配置文件 / 内置默认,
+含空串与空白回退)与分词规则。
+`helper/tests/judge_flags.rs` 还会跑真实的 `zedcomp-helper judge` 二进制:验证
+`ZEDCOMP_CXXFLAGS` 里 `-DZEDCOMP_TEST_FLAG` 真的改变程序行为、配置文件在 env 为空时
+生效、env 覆盖配置文件、未知 flag(如 `-fnonexistent-flag`)编译失败。
 `../fixtures/{cf,ac,luogu}.json` 存在时会作为真实 CC body 参与解析测试。
 
 端到端脚本(需要 python3 / bash,会自行选择空闲端口):
@@ -152,9 +194,11 @@ bash    scripts/e2e_judge.sh "$BIN" /tmp/zedcomp-judge     # clang++ 可用,默�
 ```
 
 `e2e_serve.py` 驱动真实 LSP 会话,验证 `capabilities:{}`、`initializationOptions.port`
-重绑定、`ZEDCOMP_WORKSPACE` / `rootUri`(含 `%20`)优先级、POST → 目录生成、
-`window/logMessage`、端口占用退化、`initializationOptions.templatePath` 渲染自定义
-模板以及 stdin EOF 退出。`e2e_judge.sh` 验证 AC/WA/TLE/RE/编译错误与退出码。
+重绑定、`ZEDCOMP_WORKSPACE` / `rootUri`(含 `%20`)优先级、POST → 目录生成(未配模板时
+`main.cpp` 为 0 字节)、`window/logMessage`、端口占用退化、
+`initializationOptions.templatePath` 渲染自定义模板、`$ZEDCOMP_CONFIG_DIR/template.cpp`
+渲染,以及 stdin EOF 退出。`e2e_judge.sh` 验证 AC/WA/TLE/RE/编译错误与退出码,以及
+编译选项的 env / 配置文件 / 覆盖 / 未知 flag 四种情形。
 
 ## 未实现
 

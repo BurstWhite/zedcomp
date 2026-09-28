@@ -34,8 +34,8 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    /// New state, using `port` as the initial HTTP port and the compiled-in
-    /// default template until the client sends `initialize`.
+    /// New state, listening on `port` and using no template (an empty
+    /// `main.cpp`) until the client sends `initialize`.
     pub fn new(port: u16) -> Self {
         Self {
             port: AtomicU16::new(port),
@@ -268,9 +268,9 @@ fn handle_message(state: &Arc<ServerState>, message: &Value) -> Option<i32> {
             let spec = state.template_spec();
             let template = state.resolve_template();
             // Nudge towards the config file only when nothing is configured at
-            // all and the compiled-in default is what problems will get.
+            // all and problems will therefore get an empty main.cpp.
             let hint = if spec.is_unset()
-                && matches!(template.origin(), template::TemplateOrigin::Embedded)
+                && matches!(template.origin(), template::TemplateOrigin::EmptyDefault)
             {
                 match template::config_template_path() {
                     Some(path) => format!(" -- create {} to customize", path.display()),

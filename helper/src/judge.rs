@@ -1,12 +1,17 @@
 //! `zedcomp-helper judge <problem_dir>`
 //!
-//! Compiles `<problem_dir>/main.cpp` with
-//! `g++ -std=c++17 -O2 -o .main main.cpp`, runs it against every `inK` file and
-//! compares stdout with `ansK` (trailing whitespace on a line and trailing blank
-//! lines are ignored).
+//! Compiles `<problem_dir>/main.cpp` as `<CXX> <flags…> -o .main main.cpp`, runs
+//! it against every `inK` file and compares stdout with `ansK` (trailing
+//! whitespace on a line and trailing blank lines are ignored).
+//!
+//! `judge` is a standalone CLI process, so the compiler and the flags come from
+//! its own environment — `ZEDCOMP_CXX` for the compiler, and `ZEDCOMP_CXXFLAGS`
+//! / `$ZEDCOMP_CONFIG_DIR/cxxflags` / the built-in `-std=c++17 -O2` for the
+//! flags, in that order. See [`crate::cxxflags`] for the exact rules.
 //!
 //! Output format (one line per test, `k` is the test number):
 //! ```text
+//! Judging /path/to/problem (time limit 2000 ms, 3 test(s), cxx: g++ -std=c++17 -O2)
 //! Test #1: AC (12ms)
 //! Test #2: WA
 //! ```
@@ -19,9 +24,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::cc;
+use crate::cxxflags::{self, CompileConfig};
 
-const COMPILER: &str = "g++";
-const COMPILE_FLAGS: [&str; 4] = ["-std=c++17", "-O2", "-o", ".main"];
+/// Source file compiled and judged inside the problem directory.
+const SOURCE_NAME: &str = "main.cpp";
+/// Compiled binary, kept next to the source for manual re-runs.
+const BINARY_NAME: &str = ".main";
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
 const MIN_TIME_LIMIT_MS: u64 = 50;
 
@@ -75,10 +83,10 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn judge_dir(dir: &Path, time_limit_override: Option<u64>) -> i32 {
-    let source = dir.join("main.cpp");
+    let source = dir.join(SOURCE_NAME);
     if !source.is_file() {
         eprintln!(
-            "zedcomp-helper judge: {} not found (expected main.cpp)",
+            "zedcomp-helper judge: {} not found (expected {SOURCE_NAME})",
             source.display()
         );
         return 1;
@@ -108,17 +116,19 @@ fn judge_dir(dir: &Path, time_limit_override: Option<u64>) -> i32 {
         }
     };
 
+    // Resolve the toolchain before the summary line so the exact compiler and
+    // flags of this run are part of the output (handy when a compile error or a
+    // TLE needs explaining).
+    let compile_config = cxxflags::resolve();
+
     println!(
-        "Judging {} (time limit {time_limit_ms} ms, {} test(s))",
+        "Judging {} (time limit {time_limit_ms} ms, {} test(s), cxx: {})",
         dir.display(),
-        cases.len()
+        cases.len(),
+        compile_config.describe()
     );
 
-    let compiler = std::env::var("ZEDCOMP_CXX")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| COMPILER.to_string());
-    if let Err(code) = compile(dir, &compiler) {
+    if let Err(code) = compile(dir, &compile_config) {
         return code;
     }
 
@@ -127,7 +137,7 @@ fn judge_dir(dir: &Path, time_limit_override: Option<u64>) -> i32 {
         return 1;
     }
 
-    let binary = dir.join(".main");
+    let binary = dir.join(BINARY_NAME);
     let limit = Duration::from_millis(time_limit_ms);
     let mut passed = 0usize;
     let mut all_ok = true;
@@ -187,17 +197,25 @@ fn judge_dir(dir: &Path, time_limit_override: Option<u64>) -> i32 {
     }
 }
 
-fn compile(dir: &Path, compiler: &str) -> Result<(), i32> {
-    let output = Command::new(compiler)
-        .args(COMPILE_FLAGS)
-        .arg("main.cpp")
+/// `<CXX> <flags…> -o .main main.cpp`, run inside `dir`.
+///
+/// The flags keep the order the user gave; `-o` and the source file always come
+/// last so a stray flag order can never move the output binary.
+fn compile(dir: &Path, config: &CompileConfig) -> Result<(), i32> {
+    let output = Command::new(&config.compiler)
+        .args(&config.flags)
+        .arg("-o")
+        .arg(BINARY_NAME)
+        .arg(SOURCE_NAME)
         .current_dir(dir)
         .output();
 
     match output {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => {
-            println!("Compile error:");
+            // Naming the source of the flags is the fastest way to spot a stale
+            // `~/.config/zedcomp/cxxflags` breaking the build.
+            println!("Compile error: [flags from {}]", config.origin.describe());
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !stdout.trim().is_empty() {
@@ -207,7 +225,7 @@ fn compile(dir: &Path, compiler: &str) -> Result<(), i32> {
                 print!("{stderr}");
             }
             if stdout.trim().is_empty() && stderr.trim().is_empty() {
-                println!("  {compiler} exited with {}", output.status);
+                println!("  {} exited with {}", config.describe(), output.status);
             }
             if stderr.contains("bits/stdc++.h") {
                 println!(
@@ -219,8 +237,9 @@ fn compile(dir: &Path, compiler: &str) -> Result<(), i32> {
         }
         Err(err) => {
             eprintln!(
-                "zedcomp-helper judge: failed to run {compiler}: {err}\n\
-                 hint: install g++ or set ZEDCOMP_CXX (e.g. g++-14, clang++)"
+                "zedcomp-helper judge: failed to run {}: {err}\n\
+                 hint: install g++ or set ZEDCOMP_CXX (e.g. g++-14, clang++)",
+                config.compiler
             );
             Err(1)
         }

@@ -28,6 +28,8 @@
 #   ZEDCOMP_E2E_STRICT_PORT if 1, fail instead of falling back to a free port
 #   ZEDCOMP_E2E_NO_ZED_OPEN if 1, put a no-op `zed` shim first in PATH so the
 #                           helper's auto-open does not pop up temp files
+#   ZEDCOMP_CONFIG_DIR      config dir for template.cpp/cxxflags; defaults to an
+#                           empty dir so the run does not depend on ~/.config
 #
 # Port conflicts: the default 27121 is also the port of the real CPH VS Code
 # extension, so on a developer machine it is frequently already taken. When
@@ -54,6 +56,16 @@ FIFO="${LOGDIR}/helper.stdin.fifo"
 HELPER_PID=""
 HELPER_BIN=""
 PROBLEM_DIR=""
+
+# Pin the config directory to an empty one unless the caller set it: without a
+# template.cpp the generated main.cpp must be a 0-byte file (asserted below),
+# and without a cxxflags file `judge` must use the built-in `-std=c++17 -O2`.
+# Either assertion would otherwise depend on the developer's ~/.config/zedcomp.
+if [ -z "${ZEDCOMP_CONFIG_DIR:-}" ]; then
+  ZEDCOMP_CONFIG_DIR="${LOGDIR}/config"
+  mkdir -p "$ZEDCOMP_CONFIG_DIR" || { echo "could not create $ZEDCOMP_CONFIG_DIR" >&2; exit 1; }
+  export ZEDCOMP_CONFIG_DIR
+fi
 
 C_RESET=""; C_RED=""; C_GRN=""; C_YEL=""
 if [ -t 1 ]; then
@@ -346,6 +358,13 @@ if [ "$FAILURES" -gt 0 ]; then
 fi
 
 # ------------------------------------------------- 5. no-clobber check ------
+
+step "assert the generated main.cpp is empty (no template configured)"
+if [ -f "${CF_DIR}/main.cpp" ] && [ ! -s "${CF_DIR}/main.cpp" ]; then
+  ok "generated main.cpp is a 0-byte file (empty default, no template configured)"
+else
+  bad "generated main.cpp should be empty without a template (${CF_DIR}/main.cpp, $(wc -c < "${CF_DIR}/main.cpp" 2>/dev/null || echo '?') bytes)"
+fi
 
 step "re-POST cf.json (existing main.cpp must not be overwritten)"
 CF_MAIN_SUM="$(shasum -a 256 "${CF_DIR}/main.cpp" 2>/dev/null | awk '{print $1}')"

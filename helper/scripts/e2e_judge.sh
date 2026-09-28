@@ -4,6 +4,9 @@
 set -u
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
 export ZEDCOMP_CXX="${ZEDCOMP_CXX:-clang++}"
+# The flag cases below set these explicitly; clear any ambient value from the
+# developer's shell so the earlier cases really exercise the built-in default.
+unset ZEDCOMP_CXXFLAGS ZEDCOMP_CONFIG_DIR
 
 BIN="${1:?usage: e2e_judge.sh <helper-binary> <scratch-dir>}"
 SCRATCH="${2:?usage: e2e_judge.sh <helper-binary> <scratch-dir>}"
@@ -99,6 +102,57 @@ OUT="$("$BIN" judge "$DIR5" 2>&1)"; CODE=$?
 echo "$OUT" | sed 's/^/    | /'
 check "$CODE" "1" "exit code is 1 on compile error"
 echo "$OUT" | grep -q "^Compile error:" && pass "compile error reported" || fail "compile error reported"
+
+# ------------------------------------------------------ custom compile flags
+# Program whose behaviour depends on -DZEDCOMP_TEST_FLAG; ans1 expects FLAG, so
+# the test is AC only when the define actually reached the compiler.
+DIR7="$SCRATCH/flags"
+mkdir -p "$DIR7"
+cat > "$DIR7/main.cpp" <<'CPP'
+#include <cstdio>
+int main() {
+#ifdef ZEDCOMP_TEST_FLAG
+    std::puts("FLAG");
+#else
+    std::puts("NOFLAG");
+#endif
+    return 0;
+}
+CPP
+printf '\n' > "$DIR7/in1"
+printf 'FLAG\n' > "$DIR7/ans1"
+printf '{"timeLimit":5000}' > "$DIR7/problem.json"
+
+echo "judge: built-in flags when nothing is configured -> macro undefined -> WA"
+OUT="$("$BIN" judge "$DIR7" 2>&1)"; CODE=$?
+echo "$OUT" | sed 's/^/    | /'
+check "$CODE" "1" "default flags leave ZEDCOMP_TEST_FLAG undefined"
+echo "$OUT" | grep -q "cxx: .* -std=c++17 -O2)" && pass "summary reports compiler + default flags" || fail "summary reports compiler + default flags"
+
+echo "judge: ZEDCOMP_CXXFLAGS=-DZEDCOMP_TEST_FLAG -> AC"
+OUT="$(ZEDCOMP_CXXFLAGS="-DZEDCOMP_TEST_FLAG" "$BIN" judge "$DIR7" 2>&1)"; CODE=$?
+echo "$OUT" | sed 's/^/    | /'
+check "$CODE" "0" "env compile flag changes the compiled program"
+echo "$OUT" | grep -q "cxx: .*-DZEDCOMP_TEST_FLAG)" && pass "summary reports the effective flag" || fail "summary reports the effective flag"
+
+echo "judge: \$ZEDCOMP_CONFIG_DIR/cxxflags is used when the env var is blank"
+CFGDIR="$SCRATCH/config-flags"
+mkdir -p "$CFGDIR"
+printf -- '-DZEDCOMP_TEST_FLAG\n' > "$CFGDIR/cxxflags"
+OUT="$(ZEDCOMP_CXXFLAGS="" ZEDCOMP_CONFIG_DIR="$CFGDIR" "$BIN" judge "$DIR7" 2>&1)"; CODE=$?
+echo "$OUT" | sed 's/^/    | /'
+check "$CODE" "0" "blank ZEDCOMP_CXXFLAGS falls back to the cxxflags file"
+
+echo "judge: a real ZEDCOMP_CXXFLAGS beats the cxxflags file"
+OUT="$(ZEDCOMP_CXXFLAGS="-std=c++17" ZEDCOMP_CONFIG_DIR="$CFGDIR" "$BIN" judge "$DIR7" 2>&1)"; CODE=$?
+echo "$OUT" | sed 's/^/    | /'
+check "$CODE" "1" "env flags win over the config file"
+
+echo "judge: unknown compile flag fails the build"
+OUT="$(ZEDCOMP_CXXFLAGS="-fnonexistent-flag" "$BIN" judge "$DIR7" 2>&1)"; CODE=$?
+echo "$OUT" | sed 's/^/    | /'
+check "$CODE" "1" "unknown flag -> non-zero exit"
+echo "$OUT" | grep -q "^Compile error:" && pass "unknown flag reported as a compile error" || fail "unknown flag reported as a compile error"
 
 # ---------------------------------------------------------------- missing dir
 echo "judge: bad arguments"

@@ -10,6 +10,8 @@
 //! See `README.md` for the full usage notes.
 
 mod cc;
+mod config;
+mod cxxflags;
 mod http;
 mod judge;
 mod lsp;
@@ -33,8 +35,10 @@ USAGE:
 ENVIRONMENT:
     ZEDCOMP_PORT       HTTP port for Competitive Companion (default 27121)
     ZEDCOMP_WORKSPACE  Workspace root; wins over the LSP rootUri/rootPath
-    ZEDCOMP_CONFIG_DIR Directory holding template.cpp (default ~/.config/zedcomp)
+    ZEDCOMP_CONFIG_DIR Directory holding template.cpp and cxxflags
+                       (default ~/.config/zedcomp)
     ZEDCOMP_CXX        C++ compiler used by `judge` (default g++)
+    ZEDCOMP_CXXFLAGS   Compile flags for `judge` (default \"-std=c++17 -O2\")
     ZEDCOMP_ZED_CLI    `zed` CLI path used to open main.cpp
     ZEDCOMP_NO_OPEN    Set to 1 to never launch `zed`
 
@@ -45,9 +49,15 @@ LSP initializationOptions:
 TEMPLATE (first source that is available wins):
     1. initializationOptions.templatePath (absolute path, ~/ is expanded)
     2. initializationOptions.template (inline string)
-    3. $ZEDCOMP_CONFIG_DIR/template.cpp, default ~/.config/zedcomp/template.cpp
-    4. built-in default template
-Placeholders: {{PROBLEM_NAME}} {{URL}} {{CONTEST}} {{PROBLEM_ID}} {{OJ}}";
+    3. $ZEDCOMP_CONFIG_DIR/template.cpp (default ~/.config/zedcomp/template.cpp)
+    4. nothing configured: main.cpp is created as an empty (0-byte) file
+Placeholders: {{PROBLEM_NAME}} {{URL}} {{CONTEST}} {{PROBLEM_ID}} {{OJ}}
+
+COMPILE FLAGS for `judge` (first source that is available wins):
+    1. ZEDCOMP_CXXFLAGS
+    2. $ZEDCOMP_CONFIG_DIR/cxxflags (default ~/.config/zedcomp/cxxflags)
+    3. built-in default: -std=c++17 -O2
+Values are split on ASCII whitespace: no quoting, no backslash escaping.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -641,16 +641,15 @@ mod tests {
         let payload = r#"{"name":"A. String Task","url":"https://codeforces.com/problemset/problem/118/A","timeLimit":2000,"tests":[{"input":"tour\n","output":".t.r\n"},{"input":"a\n","output":"a\n"}]}"#;
         let problem = CcProblem::parse(payload).unwrap();
         let info = info(&problem.url());
-        let template = template::Template::embedded();
+        let template = template::Template::default_empty();
         let outcome = generate(&root, &info, &problem, &problem.tests(), &template).unwrap();
 
         assert_eq!(outcome.dir, root.join("cf/118/A"));
         assert!(outcome.wrote_main);
         assert_eq!(outcome.test_count, 2);
         assert!(outcome.main_cpp.ends_with("main.cpp"));
-        let main = fs::read_to_string(&outcome.main_cpp).unwrap();
-        assert!(main.contains("// A. String Task"));
-        assert!(main.contains("#include <bits/stdc++.h>"));
+        // No template configured: main.cpp is created as a 0-byte empty file.
+        assert_eq!(fs::read(&outcome.main_cpp).unwrap(), Vec::<u8>::new());
         assert_eq!(fs::read_to_string(outcome.dir.join("in1")).unwrap(), "tour\n");
         assert_eq!(fs::read_to_string(outcome.dir.join("ans2")).unwrap(), "a\n");
         assert_eq!(fs::read_to_string(outcome.dir.join("problem.json")).unwrap(), payload);
