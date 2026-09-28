@@ -1,7 +1,8 @@
 //! Minimal LSP server over stdio.
 //!
 //! Only what ZedComp needs is implemented:
-//! `initialize` (captures `rootUri` / `rootPath` / `initializationOptions.port`),
+//! `initialize` (captures `rootUri` / `rootPath` / `initializationOptions.port`
+//! / `initializationOptions.templatePath` / `initializationOptions.template`),
 //! `initialized`, `shutdown`, `exit`; every other request is answered with a
 //! `null` result and every other notification is ignored.
 //!
@@ -15,6 +16,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
+use crate::template::{self, Template, TemplateSpec};
+
 /// Port used when neither `ZEDCOMP_PORT` nor `initializationOptions.port` is set.
 pub const DEFAULT_PORT: u16 = 27121;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
@@ -24,17 +27,20 @@ const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 pub struct ServerState {
     port: AtomicU16,
     workspace_root: Mutex<Option<PathBuf>>,
+    template_spec: Mutex<TemplateSpec>,
     initialized: AtomicBool,
     shutdown_requested: AtomicBool,
     stdout: Mutex<io::Stdout>,
 }
 
 impl ServerState {
-    /// New state, using `port` as the initial HTTP port.
+    /// New state, using `port` as the initial HTTP port and the compiled-in
+    /// default template until the client sends `initialize`.
     pub fn new(port: u16) -> Self {
         Self {
             port: AtomicU16::new(port),
             workspace_root: Mutex::new(None),
+            template_spec: Mutex::new(TemplateSpec::default()),
             initialized: AtomicBool::new(false),
             shutdown_requested: AtomicBool::new(false),
             stdout: Mutex::new(io::stdout()),
@@ -62,6 +68,32 @@ impl ServerState {
     fn set_workspace_root(&self, root: PathBuf) {
         let mut guard = self.workspace_root.lock().unwrap_or_else(|err| err.into_inner());
         *guard = Some(root);
+    }
+
+    /// Template selection advertised by the LSP client, if any.
+    pub fn template_spec(&self) -> TemplateSpec {
+        self.template_spec
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone()
+    }
+
+    fn set_template_spec(&self, spec: TemplateSpec) {
+        let mut guard = self
+            .template_spec
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        *guard = spec;
+    }
+
+    /// Resolve the template to render `main.cpp` with.
+    ///
+    /// Resolution happens per problem fetch, so editing
+    /// `~/.config/zedcomp/template.cpp` takes effect without restarting the
+    /// helper. Unreadable `templatePath` values only warn (see
+    /// [`template::resolve`]).
+    pub fn resolve_template(&self) -> Template {
+        template::resolve(&self.template_spec())
     }
 
     /// True once the client sent `initialized`.
@@ -233,11 +265,26 @@ fn handle_message(state: &Arc<ServerState>, message: &Value) -> Option<i32> {
             let workspace = resolve_workspace_root(state)
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "<unset>".to_string());
+            let spec = state.template_spec();
+            let template = state.resolve_template();
+            // Nudge towards the config file only when nothing is configured at
+            // all and the compiled-in default is what problems will get.
+            let hint = if spec.is_unset()
+                && matches!(template.origin(), template::TemplateOrigin::Embedded)
+            {
+                match template::config_template_path() {
+                    Some(path) => format!(" -- create {} to customize", path.display()),
+                    None => String::new(),
+                }
+            } else {
+                String::new()
+            };
             state.log_message(
                 3,
                 &format!(
-                    "ZedComp helper ready: http://127.0.0.1:{} (workspace: {workspace})",
-                    state.port()
+                    "ZedComp helper ready: http://127.0.0.1:{} (workspace: {workspace}, template: {}{hint})",
+                    state.port(),
+                    template.origin().describe()
                 ),
             );
             None
@@ -277,6 +324,12 @@ fn capture_initialize(state: &Arc<ServerState>, params: &Value) {
             }
         }
     }
+
+    // `templatePath` / `template` are resolved lazily at generation time so an
+    // edited config template is picked up without restarting the helper.
+    state.set_template_spec(TemplateSpec::from_options(
+        params.get("initializationOptions"),
+    ));
 
     let root_uri = params
         .get("rootUri")
@@ -406,6 +459,34 @@ mod tests {
         capture_initialize(&state, &params);
         assert_eq!(state.port(), 1234);
         assert_eq!(state.workspace_root(), Some(PathBuf::from("/tmp/explicit")));
+    }
+
+    #[test]
+    fn initialize_captures_template_options() {
+        let state = Arc::new(ServerState::new(DEFAULT_PORT));
+        capture_initialize(
+            &state,
+            &json!({
+                "initializationOptions": {
+                    "templatePath": "/tmp/zedcomp-does-not-exist/template.cpp",
+                    "template": "inline {{OJ}}\n"
+                }
+            }),
+        );
+        assert_eq!(
+            state.template_spec().path.as_deref(),
+            Some("/tmp/zedcomp-does-not-exist/template.cpp")
+        );
+        assert_eq!(state.template_spec().inline.as_deref(), Some("inline {{OJ}}\n"));
+        // The unreadable path warns and falls back to the inline template.
+        let resolved = state.resolve_template();
+        assert_eq!(resolved.content(), "inline {{OJ}}\n");
+        assert_eq!(resolved.origin(), &template::TemplateOrigin::OptionsInline);
+
+        // No initializationOptions at all: nothing is configured.
+        let bare = Arc::new(ServerState::new(DEFAULT_PORT));
+        capture_initialize(&bare, &json!({ "rootPath": "/tmp/rootpath" }));
+        assert!(bare.template_spec().is_unset());
     }
 
     #[test]

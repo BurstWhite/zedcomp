@@ -276,6 +276,39 @@ check(final.startswith(b"HTTP/1.1 200 OK"), "200 after deferred body", final[:60
 sock.close()
 close(proc)
 
+# ---------------------------------------------------------------- scenario F
+print("scenario F: initializationOptions.templatePath renders main.cpp")
+port_g = free_port(port_f + 1)
+ws_f = os.path.join(ROOT, "ws-f")
+config_dir = os.path.join(ROOT, "config-f")
+os.makedirs(ws_f, exist_ok=True)
+os.makedirs(config_dir, exist_ok=True)
+# Level 3 of the template priority: a config-dir template that must lose.
+with open(os.path.join(config_dir, "template.cpp"), "w") as handle:
+    handle.write("// CONFIG-DIR TEMPLATE (must lose)\n")
+custom_path = os.path.join(ROOT, "custom-template.cpp")
+with open(custom_path, "w") as handle:
+    handle.write("// CUSTOM {{OJ}}/{{CONTEST}}/{{PROBLEM_ID}}\n"
+                 "// {{PROBLEM_NAME}}\n"
+                 "// {{URL}}\n"
+                 "#include <bits/stdc++.h>\n")
+proc = start(port_g, workspace=ws_f, extra_env={"ZEDCOMP_CONFIG_DIR": config_dir})
+ready = handshake(proc, "file://" + ws_f, {"templatePath": custom_path})
+check(custom_path in ready, "logMessage reports the template source", ready)
+status, body = post(port_g, os.path.join(FIXTURES, "cf.json"))
+check(status == 200 and body == b"", "custom-template POST -> 200 empty", f"{status} {body!r}")
+custom_main = os.path.join(ws_f, "cf", "118", "A", "main.cpp")
+check(os.path.isfile(custom_main), "custom-template main.cpp written", custom_main)
+with open(os.path.join(FIXTURES, "cf.json")) as handle:
+    fixture = json.load(handle)
+main_cpp = open(custom_main).read()
+check(main_cpp.startswith("// CUSTOM cf/118/A\n"), "templatePath beats the config dir",
+      repr(main_cpp[:60]))
+check(f"// {fixture['name']}\n" in main_cpp, "{{PROBLEM_NAME}} substituted")
+check(f"// {fixture['url']}\n" in main_cpp, "{{URL}} substituted")
+check("CONFIG-DIR TEMPLATE" not in main_cpp, "config-dir template not used")
+close(proc)
+
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S):")

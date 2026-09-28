@@ -261,18 +261,20 @@ impl zed::Extension for ZedCompExtension {
         let mut args = Vec::new();
 
         // 0. Explicit user configuration:
-        //    `"lsp": { "zedcomp-helper": { "binary": { "path": "..." } } }`
+        //    `"lsp": { "zedcomp-helper": { "binary": { "path": "...", "env": {...} } } }`
+        //    `env` / `arguments` apply to whichever helper is used below, so
+        //    e.g. `binary.env.ZEDCOMP_CXX` also reaches the auto-downloaded one.
         if let Ok(settings) =
             zed::settings::LspSettings::for_worktree(language_server_id.as_ref(), worktree)
         {
             if let Some(binary) = settings.binary {
+                if let Some(binary_args) = binary.arguments {
+                    args = binary_args;
+                }
+                if let Some(binary_env) = binary.env {
+                    env.extend(binary_env);
+                }
                 if let Some(command) = binary.path {
-                    if let Some(binary_args) = binary.arguments {
-                        args = binary_args;
-                    }
-                    if let Some(binary_env) = binary.env {
-                        env.extend(binary_env);
-                    }
                     return Ok(zed::Command {
                         command,
                         args,

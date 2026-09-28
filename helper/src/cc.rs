@@ -427,7 +427,8 @@ pub struct GenerateOutcome {
 
 /// Create/refresh the problem workspace below `root`.
 ///
-/// * `main.cpp` is created only when missing (your code is never clobbered).
+/// * `main.cpp` is created only when missing (your code is never clobbered) and
+///   rendered from `template` (see [`crate::template`] for how it is resolved).
 /// * `inK` / `ansK` are regenerated from the payload each time; stale pairs from
 ///   an earlier fetch of the same problem are removed.
 /// * `problem.json` is the raw POST body, byte for byte.
@@ -436,6 +437,7 @@ pub fn generate(
     info: &UrlInfo,
     problem: &CcProblem,
     tests: &[(String, String)],
+    template: &template::Template,
 ) -> io::Result<GenerateOutcome> {
     let dir = root.join(info.relative_dir());
     fs::create_dir_all(&dir)?;
@@ -444,7 +446,16 @@ pub fn generate(
     let wrote_main = if main_cpp.exists() {
         false
     } else {
-        let rendered = template::render_cpp(&problem.name(), &problem.url());
+        let name = problem.name();
+        let url = problem.url();
+        let values = template::TemplateValues {
+            problem_name: &name,
+            url: &url,
+            contest: info.contest.as_deref(),
+            problem_id: &info.problem,
+            oj: &info.oj,
+        };
+        let rendered = template.render(&values);
         write_file(&main_cpp, rendered.as_bytes())?;
         true
     };
@@ -630,7 +641,8 @@ mod tests {
         let payload = r#"{"name":"A. String Task","url":"https://codeforces.com/problemset/problem/118/A","timeLimit":2000,"tests":[{"input":"tour\n","output":".t.r\n"},{"input":"a\n","output":"a\n"}]}"#;
         let problem = CcProblem::parse(payload).unwrap();
         let info = info(&problem.url());
-        let outcome = generate(&root, &info, &problem, &problem.tests()).unwrap();
+        let template = template::Template::embedded();
+        let outcome = generate(&root, &info, &problem, &problem.tests(), &template).unwrap();
 
         assert_eq!(outcome.dir, root.join("cf/118/A"));
         assert!(outcome.wrote_main);
@@ -649,12 +661,36 @@ mod tests {
             r#"{"name":"A. String Task","url":"https://codeforces.com/problemset/problem/118/A","tests":[{"input":"z\n","output":"z\n"}]}"#,
         )
         .unwrap();
-        let outcome2 = generate(&root, &info, &problem2, &problem2.tests()).unwrap();
+        let outcome2 = generate(&root, &info, &problem2, &problem2.tests(), &template).unwrap();
         assert!(!outcome2.wrote_main);
         assert_eq!(fs::read_to_string(&outcome.main_cpp).unwrap(), "// my solution\n");
         assert!(outcome2.dir.join("in1").is_file());
         assert!(!outcome2.dir.join("in2").exists());
         assert!(!outcome2.dir.join("ans2").exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A user template receives the OJ / contest / problem values of the payload.
+    #[test]
+    fn generates_workspace_from_a_custom_template() {
+        let root =
+            std::env::temp_dir().join(format!("zedcomp-cc-custom-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let payload = r#"{"name":"A. String Task","url":"https://codeforces.com/problemset/problem/118/A","tests":[]}"#;
+        let problem = CcProblem::parse(payload).unwrap();
+        let info = info(&problem.url());
+        let custom = template::Template::from_parts(
+            "// {{OJ}} {{CONTEST}} {{PROBLEM_ID}}\n// {{PROBLEM_NAME}}\n// {{URL}}\n",
+            template::TemplateOrigin::OptionsInline,
+        );
+        let outcome = generate(&root, &info, &problem, &problem.tests(), &custom).unwrap();
+        assert_eq!(
+            fs::read_to_string(&outcome.main_cpp).unwrap(),
+            "// cf 118 A\n// A. String Task\n// https://codeforces.com/problemset/problem/118/A\n"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

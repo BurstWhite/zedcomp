@@ -228,7 +228,10 @@ fn handle_connection(mut stream: TcpStream, state: &Arc<lsp::ServerState>) -> io
     };
 
     let tests = problem.tests();
-    let outcome = match cc::generate(&root, &info, &problem, &tests) {
+    // Resolved per fetch so a config template edited while the helper runs is
+    // picked up by the next problem.
+    let template = state.resolve_template();
+    let outcome = match cc::generate(&root, &info, &problem, &tests, &template) {
         Ok(outcome) => outcome,
         Err(err) => {
             let message = format!("failed to create {}: {err}\n", info.relative_dir().display());

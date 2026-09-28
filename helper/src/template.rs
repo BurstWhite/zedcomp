@@ -1,13 +1,41 @@
-//! Embedded C++ solution template.
+//! C++ solution template resolution and rendering.
 //!
-//! The template is compiled into the binary (`const &str`), so the helper never
-//! needs template files on disk. `{{PROBLEM_NAME}}` and `{{URL}}` are replaced
-//! when a workspace is generated.
+//! The template written to `main.cpp` is resolved from the highest-priority
+//! source that is actually available, so users can override the compiled-in
+//! default without rebuilding the helper:
+//!
+//! 1. `initializationOptions.templatePath` — absolute path of a template file,
+//! 2. `initializationOptions.template` — inline template string,
+//! 3. `$ZEDCOMP_CONFIG_DIR/template.cpp`, defaulting to
+//!    `$HOME/.config/zedcomp/template.cpp`,
+//! 4. [`CPP_TEMPLATE`] — the template compiled into the binary.
+//!
+//! Every level is optional: a level that is not configured falls through to the
+//! next one, and a level that is configured but unusable (unreadable
+//! `templatePath`, for instance) is reported on stderr and skipped rather than
+//! aborting the fetch.
 
-/// Placeholder for the problem name inside [`CPP_TEMPLATE`].
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+
+/// Placeholder for the problem name inside a template.
 pub const PLACEHOLDER_NAME: &str = "{{PROBLEM_NAME}}";
-/// Placeholder for the problem URL inside [`CPP_TEMPLATE`].
+/// Placeholder for the problem URL inside a template.
 pub const PLACEHOLDER_URL: &str = "{{URL}}";
+/// Placeholder for the contest identifier (`118`, `abc300`, `12345`).
+pub const PLACEHOLDER_CONTEST: &str = "{{CONTEST}}";
+/// Placeholder for the problem identifier (`A`, `abc300_a`, `P1000`).
+pub const PLACEHOLDER_PROBLEM_ID: &str = "{{PROBLEM_ID}}";
+/// Placeholder for the short OJ code (`cf`, `ac`, `luogu`).
+pub const PLACEHOLDER_OJ: &str = "{{OJ}}";
+
+/// Environment variable overriding the directory searched for `template.cpp`.
+pub const CONFIG_DIR_ENV: &str = "ZEDCOMP_CONFIG_DIR";
+/// File name looked up inside the config directory.
+pub const CONFIG_TEMPLATE_NAME: &str = "template.cpp";
 
 /// Default competitive-programming skeleton written to `main.cpp`.
 pub const CPP_TEMPLATE: &str = r#"// {{PROBLEM_NAME}}
@@ -24,16 +52,235 @@ int main() {
 }
 "#;
 
-/// Render the C++ template with the problem name / URL substituted.
+/// Where a resolved template's content came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TemplateOrigin {
+    /// `initializationOptions.templatePath` (the path that was read).
+    OptionsPath(PathBuf),
+    /// `initializationOptions.template`.
+    OptionsInline,
+    /// `$ZEDCOMP_CONFIG_DIR/template.cpp` or `~/.config/zedcomp/template.cpp`.
+    ConfigFile(PathBuf),
+    /// [`CPP_TEMPLATE`], compiled into the binary.
+    Embedded,
+}
+
+impl TemplateOrigin {
+    /// Short human-readable description used in `window/logMessage` output.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::OptionsPath(path) => {
+                format!("initializationOptions.templatePath ({})", path.display())
+            }
+            Self::OptionsInline => "initializationOptions.template".to_string(),
+            Self::ConfigFile(path) => path.display().to_string(),
+            Self::Embedded => "built-in default".to_string(),
+        }
+    }
+}
+
+/// Template text plus the source it was resolved from.
+#[derive(Debug, Clone)]
+pub struct Template {
+    content: String,
+    origin: TemplateOrigin,
+}
+
+impl Template {
+    /// The compiled-in default template.
+    pub fn embedded() -> Self {
+        Self {
+            content: CPP_TEMPLATE.to_string(),
+            origin: TemplateOrigin::Embedded,
+        }
+    }
+
+    fn new(content: String, origin: TemplateOrigin) -> Self {
+        Self::from_parts(content, origin)
+    }
+
+    /// Build a template from explicit content and origin.
+    pub fn from_parts(content: impl Into<String>, origin: TemplateOrigin) -> Self {
+        Self {
+            content: content.into(),
+            origin,
+        }
+    }
+
+    /// Raw template text, placeholders included.
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    /// Where [`Template::content`] came from.
+    pub fn origin(&self) -> &TemplateOrigin {
+        &self.origin
+    }
+
+    /// Render the template with the problem values substituted.
+    pub fn render(&self, values: &TemplateValues<'_>) -> String {
+        render(self.content(), values)
+    }
+}
+
+/// Values substituted into a template.
 ///
-/// Newlines are stripped from the substitutions so the leading `//` comment
-/// block cannot be broken by a hostile (or just multi-line) problem name.
-pub fn render_cpp(problem_name: &str, url: &str) -> String {
-    let clean_name = single_line(problem_name, "problem");
-    let clean_url = single_line(url, "");
-    CPP_TEMPLATE
-        .replace(PLACEHOLDER_NAME, &clean_name)
-        .replace(PLACEHOLDER_URL, &clean_url)
+/// Every placeholder is replaced; values that are missing (or empty after
+/// whitespace flattening) become the empty string.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TemplateValues<'a> {
+    /// `{{PROBLEM_NAME}}`; falls back to `problem` when empty.
+    pub problem_name: &'a str,
+    /// `{{URL}}`.
+    pub url: &'a str,
+    /// `{{CONTEST}}`; `None` when the URL has no contest segment.
+    pub contest: Option<&'a str>,
+    /// `{{PROBLEM_ID}}`.
+    pub problem_id: &'a str,
+    /// `{{OJ}}`.
+    pub oj: &'a str,
+}
+
+/// Substitute the placeholders of `template`.
+///
+/// Newlines are stripped from the substitutions so a leading `//` comment block
+/// cannot be broken by a hostile (or just multi-line) problem name.
+pub fn render(template: &str, values: &TemplateValues<'_>) -> String {
+    let problem_name = single_line(values.problem_name, "problem");
+    let url = single_line(values.url, "");
+    let contest = single_line(values.contest.unwrap_or(""), "");
+    let problem_id = single_line(values.problem_id, "");
+    let oj = single_line(values.oj, "");
+
+    template
+        .replace(PLACEHOLDER_NAME, &problem_name)
+        .replace(PLACEHOLDER_URL, &url)
+        .replace(PLACEHOLDER_CONTEST, &contest)
+        .replace(PLACEHOLDER_PROBLEM_ID, &problem_id)
+        .replace(PLACEHOLDER_OJ, &oj)
+}
+
+/// Template selection coming from the LSP `initialize` request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TemplateSpec {
+    /// `initializationOptions.templatePath`.
+    pub path: Option<String>,
+    /// `initializationOptions.template`.
+    pub inline: Option<String>,
+}
+
+impl TemplateSpec {
+    /// Extract `templatePath` / `template` from `initializationOptions`,
+    /// accepting both the top level and a nested `"zedcomp"` object (the same
+    /// scoping the port and `workspaceRoot` options use).
+    pub fn from_options(options: Option<&Value>) -> Self {
+        let Some(options) = options else {
+            return Self::default();
+        };
+        let scoped = options.get("zedcomp").unwrap_or(options);
+        Self {
+            path: string_field(scoped, &["templatePath", "template_path"])
+                .or_else(|| string_field(options, &["templatePath", "template_path"])),
+            inline: string_field(scoped, &["template"])
+                .or_else(|| string_field(options, &["template"])),
+        }
+    }
+
+    /// True when neither level of the LSP options configures a template.
+    pub fn is_unset(&self) -> bool {
+        self.path.is_none() && self.inline.is_none()
+    }
+}
+
+fn string_field(object: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+/// Resolve the template using the process environment for the config directory.
+pub fn resolve(spec: &TemplateSpec) -> Template {
+    resolve_with(spec, config_dir().as_deref())
+}
+
+/// Resolve the template against an explicit config directory.
+///
+/// The directory is a parameter (instead of being read from the environment
+/// here) so the priority order can be unit-tested deterministically.
+pub fn resolve_with(spec: &TemplateSpec, config_dir: Option<&Path>) -> Template {
+    if let Some(raw) = spec
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+    {
+        let path = expand_tilde(raw);
+        match fs::read_to_string(&path) {
+            Ok(content) => return Template::new(content, TemplateOrigin::OptionsPath(path)),
+            Err(err) => eprintln!(
+                "[zedcomp-helper] cannot read templatePath {}: {err}; \
+                 trying the next template source",
+                path.display()
+            ),
+        }
+    }
+
+    if let Some(inline) = spec
+        .inline
+        .as_deref()
+        .filter(|inline| !inline.trim().is_empty())
+    {
+        return Template::new(inline.to_string(), TemplateOrigin::OptionsInline);
+    }
+
+    if let Some(dir) = config_dir {
+        let path = dir.join(CONFIG_TEMPLATE_NAME);
+        match fs::read_to_string(&path) {
+            Ok(content) => return Template::new(content, TemplateOrigin::ConfigFile(path)),
+            // A missing `template.cpp` is the normal case: stay quiet and use
+            // the built-in template. Anything else is worth a warning.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => eprintln!(
+                "[zedcomp-helper] cannot read {}: {err}; using the built-in template",
+                path.display()
+            ),
+        }
+    }
+
+    Template::embedded()
+}
+
+/// Directory searched for `template.cpp`.
+///
+/// `ZEDCOMP_CONFIG_DIR` wins when set; otherwise this is `$HOME/.config/zedcomp`
+/// (on macOS too — no XDG indirection, matching Zed's own config location).
+pub fn config_dir() -> Option<PathBuf> {
+    if let Some(dir) = env_var(CONFIG_DIR_ENV) {
+        return Some(PathBuf::from(dir));
+    }
+    env_var("HOME").map(|home| PathBuf::from(home).join(".config").join("zedcomp"))
+}
+
+/// Path of the config file, whether or not it exists.
+pub fn config_template_path() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join(CONFIG_TEMPLATE_NAME))
+}
+
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// `~/cp/template.cpp` -> `$HOME/cp/template.cpp` (other paths pass through).
+fn expand_tilde(raw: &str) -> PathBuf {
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(home) = env_var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(raw)
 }
 
 fn single_line(value: &str, fallback: &str) -> String {
@@ -52,6 +299,30 @@ fn single_line(value: &str, fallback: &str) -> String {
 mod tests {
     use super::*;
 
+    fn values<'a>(contest: Option<&'a str>) -> TemplateValues<'a> {
+        TemplateValues {
+            problem_name: "A. String Task",
+            url: "https://codeforces.com/problemset/problem/118/A",
+            contest,
+            problem_id: "A",
+            oj: "cf",
+        }
+    }
+
+    /// Fresh scratch directory; the label keeps parallel tests apart.
+    fn temp_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("zedcomp-template-{}-{label}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_template(dir: &Path, name: &str, content: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, content).unwrap();
+        path
+    }
+
     #[test]
     fn template_keeps_bits_header_and_ios_tweaks() {
         assert!(CPP_TEMPLATE.contains("#include <bits/stdc++.h>"));
@@ -60,8 +331,8 @@ mod tests {
     }
 
     #[test]
-    fn render_replaces_both_placeholders() {
-        let out = render_cpp("A. String Task", "https://codeforces.com/problemset/problem/118/A");
+    fn render_replaces_both_legacy_placeholders() {
+        let out = render(CPP_TEMPLATE, &values(Some("118")));
         assert!(out.contains("// A. String Task"));
         assert!(out.contains("// https://codeforces.com/problemset/problem/118/A"));
         assert!(!out.contains(PLACEHOLDER_NAME));
@@ -72,9 +343,181 @@ mod tests {
     }
 
     #[test]
+    fn render_replaces_every_placeholder_including_new_ones() {
+        let template =
+            "// {{PROBLEM_NAME}}\n// {{OJ}}/{{CONTEST}}/{{PROBLEM_ID}}\n// {{URL}}\n";
+        let out = render(template, &values(Some("118")));
+        assert_eq!(
+            out,
+            "// A. String Task\n// cf/118/A\n// https://codeforces.com/problemset/problem/118/A\n"
+        );
+    }
+
+    #[test]
+    fn render_replaces_missing_values_with_empty_strings() {
+        let template = "oj=[{{OJ}}] contest=[{{CONTEST}}] id=[{{PROBLEM_ID}}] url=[{{URL}}]";
+        let out = render(template, &values(None));
+        assert_eq!(out, "oj=[cf] contest=[] id=[A] url=[https://codeforces.com/problemset/problem/118/A]");
+
+        // Every value defaulted to empty: all placeholders still disappear.
+        let empty = render(
+            "oj=[{{OJ}}] name=[{{PROBLEM_NAME}}]",
+            &TemplateValues::default(),
+        );
+        assert_eq!(empty, "oj=[] name=[problem]");
+    }
+
+    #[test]
     fn render_flattens_multiline_names() {
-        let out = render_cpp("A. Weird\nName", "https://example.com/x");
-        assert!(out.contains("// A. Weird Name\n"));
-        assert!(!out.contains("Weird\nName"));
+        let out = render(
+            "// {{PROBLEM_NAME}}\n",
+            &TemplateValues {
+                problem_name: "A. Weird\nName",
+                ..values(Some("118"))
+            },
+        );
+        assert_eq!(out, "// A. Weird Name\n");
+    }
+
+    #[test]
+    fn template_path_wins_over_inline_config_and_embedded() {
+        let dir = temp_dir("priority");
+        let path = write_template(&dir, "from-options.cpp", "PATH {{PROBLEM_ID}}\n");
+        write_template(&dir, CONFIG_TEMPLATE_NAME, "CONFIG\n");
+
+        let spec = TemplateSpec {
+            path: Some(path.to_string_lossy().into_owned()),
+            inline: Some("INLINE\n".to_string()),
+        };
+        let template = resolve_with(&spec, Some(&dir));
+        assert_eq!(template.content(), "PATH {{PROBLEM_ID}}\n");
+        assert_eq!(template.origin(), &TemplateOrigin::OptionsPath(path.clone()));
+        assert_eq!(template.render(&values(Some("118"))), "PATH A\n");
+    }
+
+    #[test]
+    fn inline_wins_over_config_and_embedded() {
+        let dir = temp_dir("inline");
+        write_template(&dir, CONFIG_TEMPLATE_NAME, "CONFIG\n");
+
+        let spec = TemplateSpec {
+            path: Some(dir.join("does-not-exist.cpp").to_string_lossy().into_owned()),
+            inline: Some("INLINE {{OJ}}\n".to_string()),
+        };
+        // The bad path warns and falls back to the inline template.
+        let template = resolve_with(&spec, Some(&dir));
+        assert_eq!(template.content(), "INLINE {{OJ}}\n");
+        assert_eq!(template.origin(), &TemplateOrigin::OptionsInline);
+        assert_eq!(template.render(&values(None)), "INLINE cf\n");
+    }
+
+    #[test]
+    fn config_file_wins_over_embedded() {
+        let dir = temp_dir("config");
+        let path = write_template(&dir, CONFIG_TEMPLATE_NAME, "CONFIG {{OJ}}/{{CONTEST}}\n");
+
+        let template = resolve_with(&TemplateSpec::default(), Some(&dir));
+        assert_eq!(template.content(), "CONFIG {{OJ}}/{{CONTEST}}\n");
+        assert_eq!(template.origin(), &TemplateOrigin::ConfigFile(path));
+        assert_eq!(template.render(&values(Some("118"))), "CONFIG cf/118\n");
+    }
+
+    #[test]
+    fn embedded_default_when_nothing_else_is_available() {
+        let dir = temp_dir("embedded-empty");
+        let template = resolve_with(&TemplateSpec::default(), Some(&dir));
+        assert_eq!(template.content(), CPP_TEMPLATE);
+        assert_eq!(template.origin(), &TemplateOrigin::Embedded);
+
+        let no_config = resolve_with(&TemplateSpec::default(), None);
+        assert_eq!(no_config.origin(), &TemplateOrigin::Embedded);
+    }
+
+    #[test]
+    fn bad_template_path_falls_back_to_config_then_embedded() {
+        let dir = temp_dir("bad-path");
+        let missing = dir.join("nope.cpp").to_string_lossy().into_owned();
+
+        // Bad path + config file present -> config file.
+        write_template(&dir, CONFIG_TEMPLATE_NAME, "CONFIG\n");
+        let with_config = resolve_with(
+            &TemplateSpec {
+                path: Some(missing.clone()),
+                inline: None,
+            },
+            Some(&dir),
+        );
+        assert_eq!(with_config.content(), "CONFIG\n");
+        assert!(matches!(with_config.origin(), TemplateOrigin::ConfigFile(_)));
+
+        // Bad path + no config file -> embedded default, never a panic.
+        let empty = temp_dir("bad-path-empty");
+        let fallback = resolve_with(
+            &TemplateSpec {
+                path: Some(missing),
+                inline: None,
+            },
+            Some(&empty),
+        );
+        assert_eq!(fallback.origin(), &TemplateOrigin::Embedded);
+        assert_eq!(fallback.content(), CPP_TEMPLATE);
+    }
+
+    #[test]
+    fn unreadable_template_path_and_blank_inline_are_ignored() {
+        let dir = temp_dir("unreadable");
+        let spec = TemplateSpec {
+            // A directory is not readable as a file on every platform.
+            path: Some(dir.to_string_lossy().into_owned()),
+            inline: Some("   \n".to_string()),
+        };
+        let template = resolve_with(&spec, Some(&dir));
+        assert_eq!(template.origin(), &TemplateOrigin::Embedded);
+    }
+
+    #[test]
+    fn spec_reads_options_at_top_level_and_under_zedcomp() {
+        let flat = serde_json::json!({
+            "port": 27121,
+            "templatePath": "/tmp/flat.cpp",
+            "template": "flat",
+        });
+        let spec = TemplateSpec::from_options(Some(&flat));
+        assert_eq!(spec.path.as_deref(), Some("/tmp/flat.cpp"));
+        assert_eq!(spec.inline.as_deref(), Some("flat"));
+
+        let nested = serde_json::json!({
+            "zedcomp": { "template_path": "/tmp/nested.cpp", "template": "nested" }
+        });
+        let spec = TemplateSpec::from_options(Some(&nested));
+        assert_eq!(spec.path.as_deref(), Some("/tmp/nested.cpp"));
+        assert_eq!(spec.inline.as_deref(), Some("nested"));
+
+        assert!(TemplateSpec::from_options(None).is_unset());
+        assert!(TemplateSpec::from_options(Some(&serde_json::json!({"port": 1}))).is_unset());
+        // Non-string values are ignored instead of panicking.
+        assert!(TemplateSpec::from_options(Some(&serde_json::json!({"template": 42}))).is_unset());
+    }
+
+    #[test]
+    fn config_dir_respects_env_override_and_ignores_xdg() {
+        // `config_dir()` is the only reader of these variables and no other test
+        // calls it, so mutating them here cannot race with the rest of the suite.
+        std::env::set_var(CONFIG_DIR_ENV, "/tmp/zedcomp-config-test");
+        assert_eq!(config_dir(), Some(PathBuf::from("/tmp/zedcomp-config-test")));
+        assert_eq!(
+            config_template_path(),
+            Some(PathBuf::from("/tmp/zedcomp-config-test/template.cpp"))
+        );
+        std::env::remove_var(CONFIG_DIR_ENV);
+
+        std::env::set_var("XDG_CONFIG_HOME", "/tmp/zedcomp-xdg-must-be-ignored");
+        if let Some(home) = env_var("HOME") {
+            assert_eq!(
+                config_dir(),
+                Some(PathBuf::from(&home).join(".config").join("zedcomp"))
+            );
+        }
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }

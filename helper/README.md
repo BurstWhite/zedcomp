@@ -48,12 +48,26 @@ zedcomp-helper --help
   `initializationOptions.workspaceRoot` / `workspaceRoot`、`rootUri`(file URI,
   支持 `%XX` 解码)、`rootPath`、`workspaceFolders[0].uri`;都没有时退化为进程
   当前目录(手动常驻场景)。
+* **模板**:生成 `main.cpp` 用的模板按以下优先级解析,全部可选,取第一个可用者:
+
+  1. LSP `initialize` 的 `initializationOptions.templatePath`(文件路径,读文件内容,
+     支持 `~/` 展开);
+  2. `initializationOptions.template`(内联字符串);
+  3. `$ZEDCOMP_CONFIG_DIR/template.cpp`,默认 `~/.config/zedcomp/template.cpp`
+     (`ZEDCOMP_CONFIG_DIR` 覆盖的是**目录**,不读 `XDG_CONFIG_HOME`);
+  4. 内嵌默认模板(见 `src/template.rs` 的 `CPP_TEMPLATE`)。
+
+  占位符:`{{PROBLEM_NAME}}`、`{{URL}}`、`{{CONTEST}}`、`{{PROBLEM_ID}}`、`{{OJ}}`;
+  缺失值替换为空串,替换值中的换行会被压平成空格。`templatePath` 非法/不可读时
+  stderr 打警告并回退到下一级,不会 panic。模板在每次收题时重新解析(改了第 3 级
+  的文件无需重启 helper),`initialized` 之后的 `window/logMessage` 会报告实际
+  使用的模板来源。
 
 收到 POST 后生成:
 
 ```
 <workspace_root>/<oj>/[<contest>/]<problem>/
-├── main.cpp          # 内嵌 C++ 模板,已存在则绝不覆盖
+├── main.cpp          # 按上面的优先级渲染模板,已存在则绝不覆盖
 ├── in1, ans1, in2, ans2, ...   # 来自 tests 数组,每次重新生成
 └── problem.json      # 原始 POST body,逐字节原样保存
 ```
@@ -107,15 +121,26 @@ Test #3: TLE
 | --- | --- |
 | `ZEDCOMP_PORT` | HTTP 端口(默认 27121,`initializationOptions.port` 优先) |
 | `ZEDCOMP_WORKSPACE` | 工作目录根,优先于 LSP 的 rootUri/rootPath |
+| `ZEDCOMP_CONFIG_DIR` | 查找 `template.cpp` 的目录(默认 `~/.config/zedcomp`) |
 | `ZEDCOMP_CXX` | judge 使用的 C++ 编译器(默认 `g++`) |
 | `ZEDCOMP_ZED_CLI` | 打开文件用的 `zed` CLI 路径 |
 | `ZEDCOMP_NO_OPEN` | 设为 `1` 则不调用 `zed` |
+
+模板相关(LSP `initializationOptions`):
+
+| 字段 | 作用 |
+| --- | --- |
+| `templatePath` | 模板文件绝对路径(优先级最高,支持 `~/`) |
+| `template` | 内联模板字符串(次优先) |
+| `zedcomp.templatePath` / `zedcomp.template` | 同上,允许嵌在 `"zedcomp"` 对象里 |
 
 ## 测试
 
 `cargo test` 覆盖:三个 OJ 的 URL 解析(含 mirror / gym / contest 形态)、未知站点
 回退、路径分量净化、CC payload 解析(整数/浮点/字符串限制值)、工作目录生成与旧
-测试点清理、答案比对与首个差异定位、LSP 帧读写与 `initialize` 参数捕获。
+测试点清理、答案比对与首个差异定位、LSP 帧读写与 `initialize` 参数捕获,以及模板
+解析(优先级顺序、`templatePath` 坏路径回退、五个占位符含缺失值、`ZEDCOMP_CONFIG_DIR`
+覆盖且忽略 `XDG_CONFIG_HOME`)。
 `../fixtures/{cf,ac,luogu}.json` 存在时会作为真实 CC body 参与解析测试。
 
 端到端脚本(需要 python3 / bash,会自行选择空闲端口):
@@ -128,8 +153,8 @@ bash    scripts/e2e_judge.sh "$BIN" /tmp/zedcomp-judge     # clang++ 可用,默�
 
 `e2e_serve.py` 驱动真实 LSP 会话,验证 `capabilities:{}`、`initializationOptions.port`
 重绑定、`ZEDCOMP_WORKSPACE` / `rootUri`(含 `%20`)优先级、POST → 目录生成、
-`window/logMessage`、端口占用退化以及 stdin EOF 退出。`e2e_judge.sh` 验证
-AC/WA/TLE/RE/编译错误与退出码。
+`window/logMessage`、端口占用退化、`initializationOptions.templatePath` 渲染自定义
+模板以及 stdin EOF 退出。`e2e_judge.sh` 验证 AC/WA/TLE/RE/编译错误与退出码。
 
 ## 未实现
 

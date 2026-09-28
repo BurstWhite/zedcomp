@@ -78,7 +78,7 @@ ZedComp then creates:
 
 ```
 <workspace_root>/<oj>/<contest>/<problem>/
-├── main.cpp        # created once, never overwritten
+├── main.cpp        # rendered from the template, created once, never overwritten
 ├── in1  ans1       # sample tests from the POST body
 ├── in2  ans2
 ├── ...
@@ -110,6 +110,8 @@ ZedComp then creates:
       // Defaults to 27121 (or $ZEDCOMP_PORT when set).
       "initialization_options": {
         "port": 27121
+        // Optional: template / templatePath — see
+        // "Customizing the code template" below.
       }
     }
   }
@@ -123,6 +125,92 @@ helper by hand, set it yourself:
 ```sh
 ZEDCOMP_WORKSPACE=~/cp zedcomp-helper
 ```
+
+## Customizing the code template
+
+The helper renders `main.cpp` from a template. Four sources are consulted and
+the **first one that is usable wins** — every level is optional:
+
+| # | Source | Notes |
+| --- | --- | --- |
+| 1 | `initializationOptions.templatePath` | Absolute path of a template file. A leading `~/` is expanded. An unreadable path logs a warning on stderr and falls through to the next level. |
+| 2 | `initializationOptions.template` | The template as an inline string in `settings.json`. |
+| 3 | `$ZEDCOMP_CONFIG_DIR/template.cpp` | `ZEDCOMP_CONFIG_DIR` defaults to `~/.config/zedcomp` (on macOS too — `XDG_CONFIG_HOME` is deliberately not consulted). |
+| 4 | built-in default | `#include <bits/stdc++.h>`, fast IO, empty `main()`. Used when nothing above is configured. |
+
+These placeholders are replaced when a problem is fetched; all of them are
+optional, and a value that does not exist for a problem becomes an empty string:
+
+| Placeholder | Value | Example |
+| --- | --- | --- |
+| `{{PROBLEM_NAME}}` | Competitive Companion `name` | `A. String Task` |
+| `{{URL}}` | Competitive Companion `url` | `https://codeforces.com/problemset/problem/118/A` |
+| `{{CONTEST}}` | Contest segment of the URL (empty for e.g. bare Luogu problems) | `118` |
+| `{{PROBLEM_ID}}` | Problem segment of the URL | `A`, `abc300_a`, `P1000` |
+| `{{OJ}}` | Short OJ code, i.e. the first directory level | `cf`, `ac`, `luogu` |
+
+Newlines in substituted values are flattened to spaces, so a multi-line problem
+name cannot break the comment block of a template. `main.cpp` is written once
+and never overwritten — delete it (or edit it in place) to pick up a new
+template for an existing problem. The template *is* re-read for every fetched
+problem, so editing the config file does not require restarting the helper; the
+`window/logMessage` ("ZedComp helper ready: … template: …") reports which source
+is in use.
+
+### A template file in `~/.config/zedcomp`
+
+Create `~/.config/zedcomp/template.cpp` and it applies to every problem without
+touching `settings.json`:
+
+```cpp
+// {{PROBLEM_NAME}}
+// {{OJ}}/{{CONTEST}}/{{PROBLEM_ID}}
+// {{URL}}
+#include <bits/stdc++.h>
+using namespace std;
+
+using ll = long long;
+
+void solve() {
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int t = 1;
+    // cin >> t;
+    while (t--) solve();
+    return 0;
+}
+```
+
+Any other location works too — point the helper at it (see below), or keep the
+file outside `~/.config` and set `ZEDCOMP_CONFIG_DIR` in the environment that
+launches Zed (or in the `env` block below).
+
+### Pointing `settings.json` at a template
+
+```jsonc
+// settings.json
+{
+  "lsp": {
+    "zedcomp-helper": {
+      "initialization_options": {
+        "port": 27121,
+        // 1. highest priority: read the template from this file
+        "templatePath": "/Users/you/cp/template.cpp"
+        // 2. or inline it (templatePath wins when both are set):
+        // "template": "// {{PROBLEM_NAME}} ({{OJ}}/{{PROBLEM_ID}})\n#include <bits/stdc++.h>\n"
+      }
+    }
+  }
+}
+```
+
+`~/cp/template.cpp` also works (`~` is expanded). Both keys may live inside a
+nested `"zedcomp"` object instead, e.g.
+`"initialization_options": { "zedcomp": { "templatePath": "…" } }`.
 
 ## Judging from a task
 
@@ -207,6 +295,93 @@ works in every language. To restrict it to C++, copy the file to
 - **Download failed / unsupported platform.** Build the helper from source
   (`cargo install --path helper`) and either put it on your `$PATH` or point
   `lsp.zedcomp-helper.binary.path` at it.
+- **`fatal error: 'bits/stdc++.h' file not found` (macOS, `judge`).** Apple's
+  clang ships no `bits/stdc++.h`, so the helper must compile with GCC. Install
+  it (`brew install gcc`) and point the helper at the real `g++`:
+  either export `ZEDCOMP_CXX=g++-14` in the shell that launches Zed, or add it
+  to the language server's environment so it works no matter how Zed is started:
+
+  ```jsonc
+  {
+    "lsp": {
+      "zedcomp-helper": {
+        "binary": { "env": { "ZEDCOMP_CXX": "g++-14" } }
+      }
+    }
+  }
+  ```
+
+  (`g++-14` is the binary Homebrew installs for GCC 14; check
+  `ls /opt/homebrew/bin/g++-*` and adjust the version.)
+
+## Distribution / Installing for others
+
+### As a dev extension (from this repository)
+
+1. `git clone https://github.com/BurstWhite/zedcomp && cd zedcomp`.
+2. In Zed, open the command palette and run `zed: extensions`, then click
+   **Install Dev Extension** and pick the repository root (the directory holding
+   `extension.toml`).
+3. Zed compiles `src/lib.rs` for `wasm32-wasip2`, so the machine needs Rust and
+   that target: `rustup target add wasm32-wasip2`. Rebuilding after an edit is
+   the same command Zed runs:
+   `cargo build --target wasm32-wasip2 --release`.
+4. That is all: the first time the helper is needed, the extension downloads
+   the matching prebuilt binary (below). Nothing has to be installed by hand,
+   although `cargo install --path helper` (putting `zedcomp-helper` on `$PATH`)
+   or `lsp.zedcomp-helper.binary.path` both take precedence and are handy for
+   local hacking.
+5. Users already on a published version should uninstall that one first — Zed
+   keys extensions by id.
+
+### How the helper downloads itself
+
+`language_server_command()` resolves the binary in this order, and only the last
+step touches the network:
+
+1. `lsp.zedcomp-helper.binary.path` from `settings.json`,
+2. `zedcomp-helper` on `$PATH`,
+3. a binary downloaded into Zed's extension working directory during an earlier
+   session (this is cached per session in memory too),
+4. the newest GitHub release of [`BurstWhite/zedcomp`](https://github.com/BurstWhite/zedcomp/releases):
+   the extension asks for the latest non-pre-release release that has assets,
+   picks the asset named after the current target triple, downloads it into the
+   extension working directory and marks it executable.
+
+Asset names are the contract between CI and the extension —
+`zedcomp-helper-<target-triple>` (`.exe` appended on Windows), e.g.
+`zedcomp-helper-aarch64-apple-darwin`, `zedcomp-helper-x86_64-unknown-linux-gnu`,
+`zedcomp-helper-x86_64-pc-windows-msvc.exe`. A `.gz` variant of any of those is
+also accepted and decompressed while downloading. If the release has no asset
+for the platform (or the download fails), the error tells the user to
+`cargo install --path helper` instead.
+
+### Publishing a new version
+
+1. Bump `version` in `extension.toml` (and in `Cargo.toml` /
+   `helper/Cargo.toml` when the helper changed), then commit.
+2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
+3. [`.github/workflows/release.yml`](.github/workflows/release.yml) triggers on
+   any `v*` tag, cross-builds the helper for the four platforms in a matrix
+   (`aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`,
+   `x86_64-pc-windows-msvc`), strips the unix binaries and publishes a GitHub
+   release with one asset per platform. No manual upload step.
+4. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on `main`:
+   `cargo test --manifest-path helper/Cargo.toml` plus the `wasm32-wasip2`
+   build of the extension. Keep both green before tagging.
+5. Users on the dev extension get the new binary the next time the helper is
+   resolved (the file name is fixed per platform, so it is re-downloaded and
+   overwritten). Nothing needs to be re-installed manually.
+
+### Getting into the official extension registry
+
+Publishing upstream is a separate, later step: the extension is not in
+[`zed-industries/extensions`](https://github.com/zed-industries/extensions) yet.
+To propose it, fork that repository, add this repository as a submodule under
+`extensions/zedcomp`, add the matching entry (id `zedcomp`) to
+`extensions.toml`, and open a PR; the helper binaries keep living on this
+repository's GitHub Releases, so nothing else changes. Until then the dev
+extension flow above is the supported install path.
 
 ## Building the extension
 

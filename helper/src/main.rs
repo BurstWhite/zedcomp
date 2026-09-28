@@ -33,12 +33,21 @@ USAGE:
 ENVIRONMENT:
     ZEDCOMP_PORT       HTTP port for Competitive Companion (default 27121)
     ZEDCOMP_WORKSPACE  Workspace root; wins over the LSP rootUri/rootPath
+    ZEDCOMP_CONFIG_DIR Directory holding template.cpp (default ~/.config/zedcomp)
     ZEDCOMP_CXX        C++ compiler used by `judge` (default g++)
     ZEDCOMP_ZED_CLI    `zed` CLI path used to open main.cpp
     ZEDCOMP_NO_OPEN    Set to 1 to never launch `zed`
 
 LSP initializationOptions:
-    { \"port\": 27121, \"workspaceRoot\": \"/path/to/workspace\" }";
+    { \"port\": 27121, \"workspaceRoot\": \"/path/to/workspace\",
+      \"templatePath\": \"/path/to/template.cpp\", \"template\": \"// {{PROBLEM_NAME}}\\n\" }
+
+TEMPLATE (first source that is available wins):
+    1. initializationOptions.templatePath (absolute path, ~/ is expanded)
+    2. initializationOptions.template (inline string)
+    3. $ZEDCOMP_CONFIG_DIR/template.cpp, default ~/.config/zedcomp/template.cpp
+    4. built-in default template
+Placeholders: {{PROBLEM_NAME}} {{URL}} {{CONTEST}} {{PROBLEM_ID}} {{OJ}}";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
